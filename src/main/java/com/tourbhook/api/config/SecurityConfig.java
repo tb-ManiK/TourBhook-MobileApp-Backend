@@ -26,13 +26,15 @@ public class SecurityConfig {
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(
+                                "/",
                         		"/uploads/**",
                                 "/api/v1/auth/**",
                                 "/v3/api-docs/**",
                                 "/swagger-ui/**",
                                 "/swagger-ui.html",
                                 "/api/v1/payments/webhook",
-                                "/api/v1/languages"
+                                "/api/v1/languages",
+                                "/ws/**"
                         ).permitAll()
                         .anyRequest().authenticated()
                 )

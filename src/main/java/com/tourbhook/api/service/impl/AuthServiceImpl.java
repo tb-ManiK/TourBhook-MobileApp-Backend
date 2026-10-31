@@ -6,11 +6,9 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.util.Map;
 import java.util.UUID;
-
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-
 import com.tourbhook.api.dto.auth.AuthResponse;
 import com.tourbhook.api.dto.auth.AuthUserResponse;
 import com.tourbhook.api.dto.auth.ForgotPasswordRequest;
@@ -32,9 +30,10 @@ import com.tourbhook.api.security.JwtService;
 import com.tourbhook.api.service.AnalyticsService;
 import com.tourbhook.api.service.AuthService;
 import com.tourbhook.api.service.EmailService;
-
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import com.google.api.client.googleapis.auth.oauth2.GoogleIdToken;
+import com.tourbhook.api.security.GoogleTokenVerifier;
 
 @Slf4j
 @Service
@@ -50,6 +49,7 @@ public class AuthServiceImpl implements AuthService {
     private final AnalyticsService analyticsService;
     private final JwtService jwtService;
     private final EmailService emailService;
+    private final GoogleTokenVerifier googleTokenVerifier;
 
     @Override
     public AuthResponse login(LoginRequest request) {
@@ -94,18 +94,33 @@ public class AuthServiceImpl implements AuthService {
         return buildAuthResponse(user);
     }
 
+
     @Override
     public AuthResponse googleLogin(GoogleAuthRequest request) {
-        log.info("Processing google sign-in for email={}", request.email());
-        User user = userRepository.findByEmailIgnoreCase(request.email())
+        GoogleIdToken.Payload payload =
+                googleTokenVerifier.verify(request.idToken());
+
+        String googleSubject = payload.getSubject();
+        String email = payload.getEmail();
+        Object nameClaim = payload.get("name");
+
+        String name = nameClaim instanceof String value && !value.isBlank()
+                ? value
+                : email.substring(0, email.indexOf('@'));
+
+        log.info("Processing verified Google sign-in");
+
+        User user = userRepository.findByEmailIgnoreCase(email)
                 .orElseGet(() -> userRepository.save(
                         User.builder()
-                                .name(request.name())
-                                .email(request.email())
+                                .name(name)
+                                .email(email)
                                 .phone("")
-                                .password(passwordEncoder.encode(UUID.randomUUID().toString()))
+                                .password(passwordEncoder.encode(
+                                        UUID.randomUUID().toString()))
                                 .dob(LocalDate.of(1995, 1, 1))
-                                .avatarUrl("https://cdn.tourbhook.local/avatar/google.png")
+                                .avatarUrl(
+                                        "https://cdn.tourbhook.local/avatar/google.png")
                                 .level("Explorer")
                                 .levelProgress(new BigDecimal("0.10"))
                                 .tripsCompleted(0)
@@ -114,9 +129,42 @@ public class AuthServiceImpl implements AuthService {
                                 .build()
                 ));
 
-        analyticsService.track("google_login", Map.of("email", user.getEmail()));
+        if (user.isDeleted()) {
+            throw new BadRequestException("User account is unavailable");
+        }
+
+        analyticsService.track(
+                "google_login",
+                Map.of("provider", "google")
+        );
+
         return buildAuthResponse(user);
     }
+
+
+//    @Override
+//    public AuthResponse googleLogin(GoogleAuthRequest request) {
+//        log.info("Processing google sign-in for email={}", request.email());
+//        User user = userRepository.findByEmailIgnoreCase(request.email())
+//                .orElseGet(() -> userRepository.save(
+//                        User.builder()
+//                                .name(request.name())
+//                                .email(request.email())
+//                                .phone("")
+//                                .password(passwordEncoder.encode(UUID.randomUUID().toString()))
+//                                .dob(LocalDate.of(1995, 1, 1))
+//                                .avatarUrl("https://cdn.tourbhook.local/avatar/google.png")
+//                                .level("Explorer")
+//                                .levelProgress(new BigDecimal("0.10"))
+//                                .tripsCompleted(0)
+//                                .premium(false)
+//                                .deleted(false)
+//                                .build()
+//                ));
+//
+//        analyticsService.track("google_login", Map.of("email", user.getEmail()));
+//        return buildAuthResponse(user);
+//    }
 
     @Override
     public TokenResponse refresh(RefreshRequest request) {
@@ -198,6 +246,27 @@ public class AuthServiceImpl implements AuthService {
         return Map.of("ok", true, "message", "Session cleared successfully");
     }
 
+//    private void issueFreshOtp(String email) {
+//        var activeCodes = otpCodeRepository.findByEmailAndConsumedFalse(email);
+//        activeCodes.forEach(existing -> existing.setConsumed(true));
+//        otpCodeRepository.saveAll(activeCodes);
+//
+//        String otp = generateOtp();
+//
+//        otpCodeRepository.save(
+//                OtpCode.builder()
+//                        .email(email)
+//                        .code(otp)
+//                        .expiresAt(Instant.now().plusSeconds(300))
+//                        .consumed(false)
+//                        .build()
+//        );
+//
+//        emailService.sendOtpEmail(email, otp, resolvePreferredLanguage(email));
+//    }
+
+
+
     private void issueFreshOtp(String email) {
         var activeCodes = otpCodeRepository.findByEmailAndConsumedFalse(email);
         activeCodes.forEach(existing -> existing.setConsumed(true));
@@ -214,7 +283,15 @@ public class AuthServiceImpl implements AuthService {
                         .build()
         );
 
-        emailService.sendOtpEmail(email, otp, resolvePreferredLanguage(email));
+        User user = userRepository.findByEmailIgnoreCase(email)
+                .orElseThrow(() -> new BadRequestException("User not found"));
+
+        emailService.sendOtpEmail(
+                email,
+                otp,
+                resolvePreferredLanguage(email),
+                user.getName()
+        );
     }
 
     private String resolvePreferredLanguage(String email) {

@@ -54,7 +54,7 @@ public class WeatherServiceImpl implements WeatherService {
         log.info("Weather lookup lat={}, lng={}", lat, lng);
 
         Map<String, Object> weather = googleMapsClient.getCurrentWeather(lat, lng);
-
+        log.info("Weather condition field: {}", weather.get("weatherCondition"));
         if (weather == null || weather.isEmpty()) {
             return new WeatherResponse(
                     city,
@@ -95,20 +95,47 @@ public class WeatherServiceImpl implements WeatherService {
         );
     }
 
+
+
     private String extractCondition(Map<String, Object> weather) {
         Object value = weather.get("weatherCondition");
-        if (value instanceof Map<?, ?> map) {
-            Object text = map.get("text");
-            if (text != null) return text.toString();
 
-            Object description = map.get("description");
-            if (description != null) return description.toString();
+        if (value instanceof Map<?, ?> conditionMap) {
+            Object description = conditionMap.get("description");
 
-            Object type = map.get("type");
-            if (type != null) return type.toString();
+            if (description instanceof Map<?, ?> descriptionMap) {
+                Object text = descriptionMap.get("text");
+
+                if (text != null) {
+                    return text.toString();
+                }
+            }
+
+            Object type = conditionMap.get("type");
+            if (type != null) {
+                return type.toString();
+            }
         }
+
         return "unknown";
     }
+
+
+
+//    private String extractCondition(Map<String, Object> weather) {
+//        Object value = weather.get("weatherCondition");
+//        if (value instanceof Map<?, ?> map) {
+//            Object text = map.get("text");
+//            if (text != null) return text.toString();
+//
+//            Object description = map.get("description");
+//            if (description != null) return description.toString();
+//
+//            Object type = map.get("type");
+//            if (type != null) return type.toString();
+//        }
+//        return "unknown";
+//    }
 
     private int extractTemperature(Map<String, Object> weather, String key) {
         Object value = weather.get(key);

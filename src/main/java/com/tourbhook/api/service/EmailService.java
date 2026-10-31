@@ -1,3 +1,4 @@
+
 package com.tourbhook.api.service;
 
 public interface EmailService {
@@ -6,5 +7,14 @@ public interface EmailService {
         sendOtpEmail(to, otp, "en");
     }
 
-    void sendOtpEmail(String to, String otp, String languageCode);
+    default void sendOtpEmail(String to, String otp, String languageCode) {
+        sendOtpEmail(to, otp, languageCode, null);
+    }
+
+    void sendOtpEmail(
+            String to,
+            String otp,
+            String languageCode,
+            String userName
+    );
 }

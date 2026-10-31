@@ -10,6 +10,7 @@ public interface PlaceService {
     List<PlaceResponse> getSuggestedPlaces(String city);
     List<PlaceResponse> search(String q);
     List<PlaceResponse> suggested();
+    List<PlaceResponse> search(String q, String city, String tripId);
     PlaceResponse getPlace(String id);
     void addToTrip(AddPlaceToTripRequest request);
     void removeFromTrip(AddPlaceToTripRequest request);

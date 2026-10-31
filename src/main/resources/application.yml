@@ -3,8 +3,8 @@ spring:
     name: tourbhook-enterprise-backend
 
   datasource:
-    url: ${DB_URL:jdbc:mysql://localhost:3306/tourbhook}
-    username: ${DB_USERNAME:root}
+    url: ${DB_URL:jdbc:mysql://localhost:3306/tourbhook_mobile}
+    username: ${DB_USERNAME:tourbhook_mobile_app}
     password: ${DB_PASSWORD:}
     driver-class-name: com.mysql.cj.jdbc.Driver
     hikari:
@@ -17,19 +17,18 @@ spring:
       validation-timeout: 5000
 
   mail:
-    host: smtp.gmail.com
-    port: 587
+    host: smtp.hostinger.com
+    port: 465
     username: ${MAIL_USERNAME:}
     password: ${MAIL_PASSWORD:}
-    protocol: smtp
     properties:
       mail:
         smtp:
           auth: true
-          starttls:
-            enable: true
-            required: true
           ssl:
+            enable: true
+          starttls:
+            enable: false
             trust: smtp.gmail.com
           connectiontimeout: 5000
           timeout: 5000
@@ -37,7 +36,7 @@ spring:
 
   jpa:
     hibernate:
-      ddl-auto: update
+      ddl-auto: ${DDL_AUTO:validate}
     show-sql: true
     properties:
       hibernate:
@@ -59,6 +58,8 @@ server:
   port: 8080
 
 google:
+  oauth:
+    web-client-id: ${GOOGLE_OAUTH_WEB_CLIENT_ID:}
   maps:
     api-key: ${GOOGLE_MAPS_API_KEY:}
     geocoding-url: https://maps.googleapis.com/maps/api/geocode/json
@@ -88,7 +89,7 @@ review-summary:
   regeneration-threshold: 10
 
 app:
-  base-url: http://32.193.3.150:8080
+  base-url: ${APP_BASE_URL:http://localhost:8080}
   upload-dir: ${user.dir}/uploads
   security:
     jwt:
@@ -101,6 +102,68 @@ razorpay:
   key-secret: ${RAZORPAY_KEY_SECRET:}
   webhook-secret: ${RAZORPAY_WEBHOOK_SECRET:}
   currency: INR
+
+chat:
+  max-message-length: 2000
+  default-max-members: 20
+  max-members-limit: 100
+  history-default-page-size: 30
+  history-max-page-size: 100
+  rate-limit-messages: 10
+  rate-limit-window-seconds: 10
+  allowed-origin-patterns:
+    - "*"
+
+venue-suggestion:
+  venue-types: [restaurant, cafe]
+  default-radius-meters: 1500
+  min-radius-meters: 100
+  max-radius-meters: 5000
+  expansion-factor: 2.0
+  max-expanded-radius-meters: 10000
+  min-reviews: 10
+  fallback-min-rating: 4.0
+  max-alternatives: 3
+
+events:
+  zone: Asia/Kolkata
+  sync:
+    enabled: true
+    cron: "0 0 */6 * * *"
+    purge-cron: "0 30 3 * * *"
+    run-on-startup: true
+    lookahead-days: 60
+    retention-days: 7
+  areas:
+    - city: Chennai
+      latitude: 13.0827
+      longitude: 80.2707
+  ticketmaster:
+    enabled: false
+    api-key: ${TICKETMASTER_API_KEY:}
+  ics-feeds:
+    - city: Chennai
+      category: Festival
+      url: https://calendar.google.com/calendar/ical/en.indian%23holiday%40group.v.calendar.google.com/public/basic.ics
+
+data-import:
+  enabled: true
+  beta: true
+  beta-label: Beta
+  beta-message: >
+    Data import is in beta. It can miss or misread details, so please review
+    the draft before creating your trip, and tell us what went wrong.
+  max-file-size-bytes: 1048576
+  feedback-daily-limit: 10
+  max-comment-length: 1000
+
+  max-itinerary-trips: 10
+  sync:
+    lookahead-days: 90
+
+ugc-links:
+  max-submissions-per-hour: 10
+  max-page-size: 50
 
 language:
   supported:

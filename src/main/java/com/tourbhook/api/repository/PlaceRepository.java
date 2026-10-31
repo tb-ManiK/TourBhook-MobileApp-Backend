@@ -31,4 +31,18 @@ public interface PlaceRepository extends JpaRepository<Place, String> {
         ORDER BY p.suggested DESC, p.rating DESC, p.reviewsCount DESC
     """)
     List<Place> searchByKeyword(@Param("keyword") String keyword);
+
+    @Query("""
+        SELECT p FROM Place p
+        WHERE p.latitude IS NOT NULL
+          AND p.longitude IS NOT NULL
+          AND p.latitude BETWEEN :minLat AND :maxLat
+          AND p.longitude BETWEEN :minLng AND :maxLng
+    """)
+    List<Place> findWithinBounds(
+            @Param("minLat") double minLat,
+            @Param("maxLat") double maxLat,
+            @Param("minLng") double minLng,
+            @Param("maxLng") double maxLng
+    );
 }

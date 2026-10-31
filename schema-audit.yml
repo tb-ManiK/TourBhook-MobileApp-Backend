@@ -1,0 +1,18 @@
+﻿spring:
+  datasource:
+    url: jdbc:mysql://127.0.0.1:3308/tourbhook_audit
+    username: root
+    password: LocalAuditOnly_84
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  jpa:
+    hibernate:
+      ddl-auto: create
+    show-sql: false
+
+events:
+  sync:
+    enabled: false
+    run-on-startup: false
+
+data-import:
+  enabled: false

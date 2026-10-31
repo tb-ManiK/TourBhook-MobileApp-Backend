@@ -22,6 +22,11 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.transaction.annotation.Propagation;
+import java.util.Comparator;
 
 @Slf4j
 @Service
@@ -32,11 +37,25 @@ public class PlaceServiceImpl implements PlaceService {
     private static final int MIN_DB_RESULTS = 10;
     private static final int TARGET_RESULTS = 30;
     private static final int NEARBY_RADIUS_METERS = 12000;
+    private static final int SEARCH_MIN_QUERY_LENGTH = 2;
+    private static final int SEARCH_MIN_GOOGLE_QUERY_LENGTH = 3;
+    private static final int SEARCH_MAX_QUERY_LENGTH = 100;
+    private static final int SEARCH_MAX_RESULTS = 20;
+    private static final int SEARCH_MIN_LOCAL_RESULTS = 10;
+    private static final long GOOGLE_SEARCH_REPEAT_MS = 10 * 60 * 1000L;
+    private static final int GOOGLE_SEARCH_CACHE_LIMIT = 2000;
+    private static final int CITY_CENTER_CACHE_LIMIT = 500;
 
     private final PlaceRepository placeRepository;
     private final TripService tripService;
     private final GoogleMapsClient googleMapsClient;
     private final PlaceRankingService placeRankingService;
+
+    @Value("${place-search.city-radius-km:40}")
+    private double cityRadiusKm = 40;
+
+    private final Map<String, double[]> cityCenters = new ConcurrentHashMap<>();
+    private final Map<String, Long> recentGoogleSearches = new ConcurrentHashMap<>();
 
     @Override
     public List<PlaceResponse> getPlaces(String city) {
@@ -121,6 +140,224 @@ public class PlaceServiceImpl implements PlaceService {
                         .values()
         );
         return toRankedResponses(deduplicated);
+    }
+
+    @Override
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    public List<PlaceResponse> search(String q, String city, String tripId) {
+        String scopedCity = resolveSearchCity(city, tripId);
+        if (scopedCity == null) {
+            return search(q);
+        }
+
+        String keyword = q == null ? "" : q.trim();
+        if (keyword.length() < SEARCH_MIN_QUERY_LENGTH) {
+            return List.of();
+        }
+        if (keyword.length() > SEARCH_MAX_QUERY_LENGTH) {
+            keyword = keyword.substring(0, SEARCH_MAX_QUERY_LENGTH).trim();
+        }
+
+        List<String> tokens = PlaceSearchSupport.significantTokens(keyword, scopedCity);
+        double[] center = findCityCenter(scopedCity);
+
+        Map<String, Place> found = new LinkedHashMap<>();
+        for (Place place : localCityCandidates(scopedCity, center)) {
+            if (PlaceSearchSupport.isAreaOnly(place.getCategory())) {
+                continue;
+            }
+            if (!isInCity(place.getLatitude(), place.getLongitude(), center, scopedCity, place.getCity(), place.getAddress())) {
+                continue;
+            }
+            if (PlaceSearchSupport.matchesAllTokens(tokens,
+                    place.getName(), place.getAddress(), place.getCategory(), place.getCity())) {
+                found.putIfAbsent(place.getId(), place);
+            }
+        }
+
+        if (found.size() < SEARCH_MIN_LOCAL_RESULTS && keyword.length() >= SEARCH_MIN_GOOGLE_QUERY_LENGTH) {
+            addGoogleMatches(keyword, scopedCity, center, tokens, found);
+        }
+
+        List<Place> ordered = new ArrayList<>(found.values());
+        ordered.sort(Comparator
+                .comparingInt((Place p) -> PlaceSearchSupport.relevance(
+                        tokens, p.getName(), p.getAddress(), p.getCategory()))
+                .reversed()
+                .thenComparing(Comparator
+                        .comparingDouble((Place p) -> placeRankingService.weightFor(p))
+                        .reversed())
+                .thenComparing(Comparator
+                        .comparingInt((Place p) -> p.getReviewsCount() == null ? 0 : p.getReviewsCount())
+                        .reversed()));
+
+        if (!ordered.isEmpty()) {
+            Place best = ordered.get(0);
+            int top = PlaceSearchSupport.relevance(tokens, best.getName(), best.getAddress(), best.getCategory());
+            int minimum = top >= 2 ? 2 : 1;
+            ordered.removeIf(p -> PlaceSearchSupport.relevance(
+                    tokens, p.getName(), p.getAddress(), p.getCategory()) < minimum);
+        }
+
+        return ordered.stream()
+                .limit(SEARCH_MAX_RESULTS)
+                .map(this::mapPlace)
+                .toList();
+    }
+
+    private String resolveSearchCity(String city, String tripId) {
+        if (city != null && !city.isBlank()) {
+            return city.trim();
+        }
+        if (tripId != null && !tripId.isBlank()) {
+            String tripCity = tripService.getTripById(tripId.trim()).city();
+            return tripCity == null || tripCity.isBlank() ? null : tripCity.trim();
+        }
+        return null;
+    }
+
+    /** Saved places that could belong to the city: same city name, or inside the city's bounding box. */
+    private List<Place> localCityCandidates(String city, double[] center) {
+        Map<String, Place> candidates = new LinkedHashMap<>();
+        for (Place place : placeRepository.findByCityIgnoreCase(city)) {
+            candidates.putIfAbsent(place.getId(), place);
+        }
+        if (center != null) {
+            double latDelta = PlaceSearchSupport.latitudeDelta(cityRadiusKm);
+            double lngDelta = PlaceSearchSupport.longitudeDelta(cityRadiusKm, center[0]);
+            for (Place place : placeRepository.findWithinBounds(
+                    center[0] - latDelta, center[0] + latDelta,
+                    center[1] - lngDelta, center[1] + lngDelta)) {
+                candidates.putIfAbsent(place.getId(), place);
+            }
+        }
+        return new ArrayList<>(candidates.values());
+    }
+
+    private boolean isInCity(
+            Double lat, Double lng, double[] center,
+            String city, String storedCity, String address
+    ) {
+        return PlaceSearchSupport.belongsToCity(
+                lat, lng,
+                center == null ? null : center[0],
+                center == null ? null : center[1],
+                cityRadiusKm, city, storedCity, address);
+    }
+
+    private void addGoogleMatches(
+            String keyword, String city, double[] center, List<String> tokens, Map<String, Place> found
+    ) {
+        String googleQuery = PlaceSearchSupport.buildGoogleQuery(keyword, city);
+        String cacheKey = PlaceSearchSupport.normalize(city) + "|" + PlaceSearchSupport.normalize(googleQuery);
+
+        if (askedGoogleRecently(cacheKey)) {
+            return;
+        }
+
+        Map<String, Object> response;
+        try {
+            Integer radiusMeters = center == null ? null : (int) Math.round(cityRadiusKm * 1000);
+            response = googleMapsClient.textSearch(
+                    googleQuery,
+                    center == null ? null : center[0],
+                    center == null ? null : center[1],
+                    radiusMeters);
+            validateGoogleResponse(googleQuery, response);
+        } catch (Exception e) {
+            // Google being down or out of quota must not break search: saved places are still returned.
+            log.warn("Google search skipped for '{}': {}", googleQuery, e.getMessage());
+            return;
+        }
+        rememberGoogleSearch(cacheKey);
+
+        List<Map<String, Object>> results = castList(response.get("results"));
+        if (results == null) {
+            return;
+        }
+
+        String sourceQuery = googleQuery.length() > 250 ? googleQuery.substring(0, 250) : googleQuery;
+        for (Map<String, Object> item : results) {
+            try {
+                if (item.get("types") instanceof List<?> types && !types.isEmpty()
+                        && PlaceSearchSupport.isAreaOnly(String.valueOf(types.get(0)))) {
+                    continue;
+                }
+                Map<String, Object> geometry = castMap(item.get("geometry"));
+                Map<String, Object> location = geometry != null ? castMap(geometry.get("location")) : null;
+                Double lat = location != null ? toDoubleOrNull(location.get("lat")) : null;
+                Double lng = location != null ? toDoubleOrNull(location.get("lng")) : null;
+
+                // Google only treats the city as a hint, so results from other cities are dropped here.
+                if (!isInCity(lat, lng, center, city, null, readString(item.get("formatted_address")))) {
+                    continue;
+                }
+
+                String category = item.get("types") instanceof List<?> t && !t.isEmpty()
+                        ? String.valueOf(t.get(0)).replace('_', ' ')
+                        : null;
+                if (PlaceSearchSupport.relevance(
+                        tokens, readString(item.get("name")), readString(item.get("formatted_address")), category) == 0) {
+                    continue;
+                }
+
+
+
+                Place saved = saveGooglePlaceOnce(item, city, sourceQuery);
+                if (saved != null) {
+                    found.putIfAbsent(saved.getId(), saved);
+                }
+            } catch (Exception e) {
+                log.error("Failed to save Google place for query '{}': {}", googleQuery, e.getMessage(), e);
+            }
+        }
+    }
+
+    private Place saveGooglePlaceOnce(Map<String, Object> item, String city, String sourceQuery) {
+        try {
+            return saveOrUpdateGooglePlace(item, city, false, sourceQuery);
+        } catch (DataIntegrityViolationException e) {
+            String googlePlaceId = readString(item.get("place_id"));
+            return googlePlaceId == null ? null : placeRepository.findByGooglePlaceId(googlePlaceId).orElse(null);
+        }
+    }
+
+    private double[] findCityCenter(String city) {
+        String key = PlaceSearchSupport.normalize(city);
+        double[] cached = cityCenters.get(key);
+        if (cached != null) {
+            return cached;
+        }
+        try {
+            Map<String, Object> coordinates = googleMapsClient.geocodeCity(city);
+            if (coordinates != null) {
+                Double lat = toDoubleOrNull(coordinates.get("lat"));
+                Double lng = toDoubleOrNull(coordinates.get("lng"));
+                if (lat != null && lng != null) {
+                    if (cityCenters.size() >= CITY_CENTER_CACHE_LIMIT) {
+                        cityCenters.clear();
+                    }
+                    double[] center = new double[]{lat, lng};
+                    cityCenters.put(key, center);
+                    return center;
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Could not find the centre of city '{}': {}", city, e.getMessage());
+        }
+        return null;
+    }
+
+    private boolean askedGoogleRecently(String key) {
+        Long askedAt = recentGoogleSearches.get(key);
+        return askedAt != null && System.currentTimeMillis() - askedAt < GOOGLE_SEARCH_REPEAT_MS;
+    }
+
+    private void rememberGoogleSearch(String key) {
+        if (recentGoogleSearches.size() >= GOOGLE_SEARCH_CACHE_LIMIT) {
+            recentGoogleSearches.clear();
+        }
+        recentGoogleSearches.put(key, System.currentTimeMillis());
     }
 
     @Override
@@ -303,6 +540,8 @@ public class PlaceServiceImpl implements PlaceService {
         Place place = placeRepository.findByGooglePlaceId(googlePlaceId)
                 .orElseGet(() -> placeRepository
                         .findFirstByNameIgnoreCaseAndCityIgnoreCase(name, city)
+                        .filter(existing -> existing.getGooglePlaceId() == null
+                                || existing.getGooglePlaceId().isBlank())
                         .orElseGet(Place::new));
 
         place.setGooglePlaceId(googlePlaceId);
@@ -361,7 +600,9 @@ public class PlaceServiceImpl implements PlaceService {
                 place.getLongitude(),
                 place.getRating(),
                 place.getReviewsCount(),
-                place.isVerified()
+                place.isVerified(),
+                place.getAddress()
+
         );
     }
 

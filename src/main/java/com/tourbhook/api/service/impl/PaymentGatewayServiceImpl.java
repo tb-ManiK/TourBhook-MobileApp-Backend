@@ -135,6 +135,14 @@ public class PaymentGatewayServiceImpl implements PaymentGatewayService {
         PaymentOrder order = paymentOrderRepository.findByRazorpayOrderId(request.razorpayOrderId())
                 .orElseThrow(() -> new ResourceNotFoundException("Payment order not found"));
 
+        User currentUser = authenticatedUserService.getCurrentUser();
+
+        if (!order.getUser().getId().equals(currentUser.getId())) {
+            throw new BadRequestException(
+                    "You are not allowed to verify this payment order"
+            );
+        }
+
         String data = request.razorpayOrderId() + "|" + request.razorpayPaymentId();
         String generatedSignature = hmacSha256Hex(data, razorpayProperties.getKeySecret());
 

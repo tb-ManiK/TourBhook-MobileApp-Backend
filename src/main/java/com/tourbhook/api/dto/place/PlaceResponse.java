@@ -12,6 +12,22 @@ public record PlaceResponse(
         Double longitude,
         BigDecimal rating,
         Integer reviewsCount,
-        boolean verified
+        boolean verified,
+        String address
 ) {
+    public PlaceResponse(
+            String id,
+            String name,
+            String category,
+            String imageUrl,
+            String typicalDuration,
+            Double latitude,
+            Double longitude,
+            BigDecimal rating,
+            Integer reviewsCount,
+            boolean verified
+    ) {
+        this(id, name, category, imageUrl, typicalDuration, latitude, longitude,
+                rating, reviewsCount, verified, null);
+    }
 }

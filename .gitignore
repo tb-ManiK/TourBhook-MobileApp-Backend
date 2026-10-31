@@ -13,3 +13,5 @@ target/
 *.jar
 
 .idea/
+
+cloudrun-mobile.env
