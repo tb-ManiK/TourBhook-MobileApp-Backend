@@ -103,6 +103,18 @@ razorpay:
   webhook-secret: ${RAZORPAY_WEBHOOK_SECRET:}
   currency: INR
 
+device-limit:
+  enabled: ${DEVICE_LIMIT_ENABLED:false}
+  require-device-id: ${DEVICE_LIMIT_REQUIRE_ID:false}
+  max-accounts-per-device: ${DEVICE_LIMIT_MAX_ACCOUNTS:1}
+  hash-pepper: ${DEVICE_ID_PEPPER:}
+
+phone-rules:
+  mode: ${PHONE_RULES_MODE:OFF}
+  default-region: ${PHONE_RULES_DEFAULT_REGION:IN}
+  allowed-types: ${PHONE_RULES_ALLOWED_TYPES:MOBILE,FIXED_LINE_OR_MOBILE}
+  check-existing-accounts: ${PHONE_RULES_CHECK_EXISTING:true}
+
 chat:
   max-message-length: 2000
   default-max-members: 20

@@ -34,6 +34,9 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import com.google.api.client.googleapis.auth.oauth2.GoogleIdToken;
 import com.tourbhook.api.security.GoogleTokenVerifier;
+import java.util.Optional;
+import com.tourbhook.api.service.DeviceRegistrationService;
+import com.tourbhook.api.service.PhoneNumberPolicyService;
 
 @Slf4j
 @Service
@@ -50,6 +53,8 @@ public class AuthServiceImpl implements AuthService {
     private final JwtService jwtService;
     private final EmailService emailService;
     private final GoogleTokenVerifier googleTokenVerifier;
+    private final DeviceRegistrationService deviceRegistrationService;
+    private final PhoneNumberPolicyService phoneNumberPolicyService;
 
     @Override
     public AuthResponse login(LoginRequest request) {
@@ -66,17 +71,21 @@ public class AuthServiceImpl implements AuthService {
     }
 
     @Override
-    public AuthResponse register(RegisterRequest request) {
+    public AuthResponse register(RegisterRequest request, String deviceId) {
         log.info("Processing registration for email={}", request.email());
         if (userRepository.existsByEmailIgnoreCase(request.email())) {
             throw new BadRequestException("Email already registered");
         }
 
+        String phone = phoneNumberPolicyService.checkForSignup(request.phone());
+
+        deviceRegistrationService.assertSignupAllowed(deviceId);
+
         User user = userRepository.save(
                 User.builder()
                         .name(request.name())
                         .email(request.email())
-                        .phone(request.phone())
+                        .phone(phone)
                         .password(passwordEncoder.encode(request.password()))
                         .dob(LocalDate.of(1995, 1, 1))
                         .avatarUrl("https://cdn.tourbhook.local/avatar/default.png")
@@ -87,6 +96,7 @@ public class AuthServiceImpl implements AuthService {
                         .deleted(false)
                         .build()
         );
+        deviceRegistrationService.linkDevice(user, deviceId);
 
         issueFreshOtp(user.getEmail());
 
@@ -96,7 +106,7 @@ public class AuthServiceImpl implements AuthService {
 
 
     @Override
-    public AuthResponse googleLogin(GoogleAuthRequest request) {
+    public AuthResponse googleLogin(GoogleAuthRequest request, String deviceId) {
         GoogleIdToken.Payload payload =
                 googleTokenVerifier.verify(request.idToken());
 
@@ -110,7 +120,13 @@ public class AuthServiceImpl implements AuthService {
 
         log.info("Processing verified Google sign-in");
 
-        User user = userRepository.findByEmailIgnoreCase(email)
+        Optional<User> existingUser = userRepository.findByEmailIgnoreCase(email);
+        boolean newUser = existingUser.isEmpty();
+        if (newUser) {
+            deviceRegistrationService.assertSignupAllowed(deviceId);
+        }
+
+        User user = existingUser
                 .orElseGet(() -> userRepository.save(
                         User.builder()
                                 .name(name)
@@ -132,7 +148,9 @@ public class AuthServiceImpl implements AuthService {
         if (user.isDeleted()) {
             throw new BadRequestException("User account is unavailable");
         }
-
+        if (newUser) {
+            deviceRegistrationService.linkDevice(user, deviceId);
+        }
         analyticsService.track(
                 "google_login",
                 Map.of("provider", "google")

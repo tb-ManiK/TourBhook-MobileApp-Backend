@@ -8,10 +8,14 @@ import org.springframework.stereotype.Component;
 import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import com.tourbhook.api.repository.exception.BadRequestException;
 
 @Component
 @RequiredArgsConstructor
 public class ContentModerationEnforcer {
+
+    static final String REJECT_MESSAGE =
+            "This cannot be shared because it contains words or links that are not allowed. Please change it and try again.";
 
     static final String BLOCK_MESSAGE = "Your account has been permanently blocked for violating content guidelines.";
 
@@ -37,6 +41,23 @@ public class ContentModerationEnforcer {
         ModerationResult result = moderationService.checkLink(url);
         if (result.flagged()) {
             blockAndThrow(author, result.reason());
+        }
+    }
+
+    public void rejectIfViolation(String... texts) {
+        for (String text : texts) {
+            if (text == null || text.isBlank()) {
+                continue;
+            }
+            if (findViolation(text).isPresent()) {
+                throw new BadRequestException(REJECT_MESSAGE);
+            }
+        }
+    }
+
+    public void rejectBlockedLink(String url) {
+        if (moderationService.checkLink(url).flagged()) {
+            throw new BadRequestException(REJECT_MESSAGE);
         }
     }
 

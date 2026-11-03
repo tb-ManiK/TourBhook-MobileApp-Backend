@@ -8,7 +8,6 @@ import com.tourbhook.api.entity.User;
 import com.tourbhook.api.repository.PlaceRepository;
 import com.tourbhook.api.repository.UgcLinkRepository;
 import com.tourbhook.api.repository.exception.BadRequestException;
-import com.tourbhook.api.repository.exception.ContentModerationException;
 import com.tourbhook.api.service.AccountEnforcementService;
 import com.tourbhook.api.service.AuthenticatedUserService;
 import com.tourbhook.api.service.ContentModerationEnforcer;
@@ -20,6 +19,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import java.util.ArrayList;
 import java.util.List;
+import org.mockito.ArgumentCaptor;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
@@ -54,12 +54,12 @@ class UgcLinkModerationTest {
         lenient().when(linkRepository.save(any(UgcLink.class))).thenAnswer(call -> call.getArgument(0));
     }
 
-    private void assertBlockedAndNothingStored(String url, String destination, String title) {
+    private void assertRejectedAndNothingStored(String url, String destination, String title) {
         assertThatThrownBy(() -> service.submitLink(new SubmitUgcLinkRequest(url, destination, null, title)))
                 .as(url + " | " + destination + " | " + title)
-                .isInstanceOf(ContentModerationException.class);
+                .isInstanceOf(BadRequestException.class);
 
-        assertThat(enforcement.blocked).as("the author is blocked, with no warning").containsExactly(user);
+        assertThat(enforcement.blocked).as("the account is left alone").isEmpty();
         verify(linkRepository, never()).save(any());
     }
 
@@ -72,33 +72,46 @@ class UgcLinkModerationTest {
     }
 
     @Test
-    void aLinkToABlockedDomain_blocksTheUser_ratherThanBeingTurnedAwayAsAnUnsupportedSite() {
-        assertBlockedAndNothingStored("https://malicious-example.test/watch?v=dQw4w9WgXcQ", "Udaipur", null);
+    void aLinkToABlockedDomain_isTurnedAway_andTheUserKeepsTheirAccount() {
+        assertRejectedAndNothingStored("https://malicious-example.test/watch?v=dQw4w9WgXcQ", "Udaipur", null);
     }
 
     @Test
-    void aBlockedDomainWithoutAScheme_orOnASubdomain_isStillCaught() {
-        assertBlockedAndNothingStored("malicious-example.test/offer", "Udaipur", null);
+    void aBlockedDomainWithoutAScheme_isTurnedAway() {
+        assertRejectedAndNothingStored("malicious-example.test/offer", "Udaipur", null);
     }
 
     @Test
-    void aBlockedDomainHiddenInsideAnOtherwiseNormalYoutubeLink_isCaught() {
-        assertBlockedAndNothingStored(CLEAN_LINK + "&redirect=malicious-example.test", "Udaipur", null);
+    void aBlockedDomainHiddenInsideAYoutubeLink_neverReachesTheDatabase() {
+        service.submitLink(new SubmitUgcLinkRequest(CLEAN_LINK + "&redirect=malicious-example.test", "Udaipur", null, null));
+
+        ArgumentCaptor<UgcLink> captor = ArgumentCaptor.forClass(UgcLink.class);
+        verify(linkRepository).save(captor.capture());
+        assertThat(captor.getValue().getUrl()).isEqualTo(CLEAN_LINK).doesNotContain("malicious");
+        assertThat(enforcement.blocked).isEmpty();
     }
 
     @Test
-    void aBannedTermInTheTitle_blocksTheUser() {
-        assertBlockedAndNothingStored(CLEAN_LINK, "Udaipur", "this tour is a scam");
+    void aBannedTermInTheTitle_isTurnedAway_andTheUserKeepsTheirAccount() {
+        assertRejectedAndNothingStored(CLEAN_LINK, "Udaipur", "this tour is a scam");
     }
 
     @Test
-    void aBlockedLinkWrittenInTheTitle_blocksTheUser() {
-        assertBlockedAndNothingStored(CLEAN_LINK, "Udaipur", "better deals at https://malicious-example.test/x");
+    void aBlockedLinkWrittenInTheTitle_isTurnedAway() {
+        assertRejectedAndNothingStored(CLEAN_LINK, "Udaipur", "better deals at https://malicious-example.test/x");
     }
 
     @Test
-    void aBannedTermInTheDestination_blocksTheUser() {
-        assertBlockedAndNothingStored(CLEAN_LINK, "scam city", null);
+    void aBannedTermInTheDestination_isTurnedAway() {
+        assertRejectedAndNothingStored(CLEAN_LINK, "scam city", null);
+    }
+
+    @Test
+    void aBannedWordInThePastedCaption_doesNotMatter_becauseTheCaptionIsNotStored() {
+        service.submitLink(new SubmitUgcLinkRequest("Avoid the scam, but see this " + CLEAN_LINK, "Udaipur", null, null));
+
+        verify(linkRepository).save(any(UgcLink.class));
+        assertThat(enforcement.blocked).isEmpty();
     }
 
     @Test

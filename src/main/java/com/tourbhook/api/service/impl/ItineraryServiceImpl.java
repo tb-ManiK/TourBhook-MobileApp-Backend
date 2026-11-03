@@ -18,7 +18,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-
+import com.tourbhook.api.service.image.ImageUrlResolver;
+import java.util.Locale;
 import java.math.BigDecimal;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
@@ -41,6 +42,7 @@ public class ItineraryServiceImpl implements ItineraryService {
     private final TripRepository tripRepository;
     private final TripPlaceRepository tripPlaceRepository;
     private final PlaceRepository placeRepository;
+    private final ImageUrlResolver imageUrlResolver;
 
     @Override
     @Transactional(readOnly = true)
@@ -386,10 +388,12 @@ public class ItineraryServiceImpl implements ItineraryService {
                 itinerary.getCity(),
                 itinerary.getTitle(),
                 itinerary.getDays().stream()
+                        .sorted(Comparator.comparing(ItineraryDay::getDayNumber, Comparator.nullsLast(Comparator.naturalOrder())))
                         .map(day -> new ItineraryDayResponse(
                                 day.getDayNumber(),
-                                day.getActivities().stream().map(this::mapActivity).toList(),
+                                day.getActivities().stream().sorted(activityTimeComparator()).map(this::mapActivity).toList(),
                                 day.getActivities().stream()
+                                        .sorted(activityTimeComparator())
                                         .map(Activity::getPlaceId)
                                         .filter(id -> id != null && !id.isBlank())
                                         .distinct()
@@ -398,7 +402,8 @@ public class ItineraryServiceImpl implements ItineraryService {
                                         .map(this::mapPlace)
                                         .toList()
                         ))
-                        .toList()
+                        .toList(),
+                imageUrlResolver.forTrip(itinerary.getTrip())
         );
     }
 
@@ -419,13 +424,14 @@ public class ItineraryServiceImpl implements ItineraryService {
                 place.getId(),
                 place.getName(),
                 place.getCategory(),
-                place.getImageUrl(),
+                imageUrlResolver.forPlace(place),
                 place.getTypicalDuration(),
                 place.getLatitude(),
                 place.getLongitude(),
                 place.getRating(),
                 place.getReviewsCount(),
-                place.isVerified()
+                place.isVerified(),
+                place.getAddress()
         );
     }
 
@@ -765,8 +771,7 @@ public class ItineraryServiceImpl implements ItineraryService {
     }
 
     private Comparator<Activity> activityTimeComparator() {
-        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("hh:mm a");
-
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("hh:mm a", Locale.ENGLISH);
         return Comparator.comparing(activity -> {
             try {
                 String time = activity.getActivityTime();

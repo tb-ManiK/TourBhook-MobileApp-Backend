@@ -6,8 +6,8 @@ import java.util.Map;
 
 public interface AuthService {
     AuthResponse login(LoginRequest request);
-    AuthResponse register(RegisterRequest request);
-    AuthResponse googleLogin(GoogleAuthRequest request);
+    AuthResponse register(RegisterRequest request, String deviceId);
+    AuthResponse googleLogin(GoogleAuthRequest request, String deviceId);
     TokenResponse refresh(RefreshRequest request);
     OtpResponse verifyOtp(VerifyOtpRequest request);
     OtpResponse forgotPassword(ForgotPasswordRequest request);

@@ -8,7 +8,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.List;
-
+import com.tourbhook.api.repository.exception.BadRequestException;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -78,6 +78,37 @@ class ContentModerationEnforcerTest {
         assertThatThrownBy(() -> enforcer.enforce(author, "Weekend Trek", null, "  ", "pure scam"))
                 .isInstanceOf(ContentModerationException.class);
         assertThat(enforcement.blocked).hasSize(1);
+    }
+
+    // ------------------------------------------------------------------ the softer check used for shared links
+
+    @Test
+    void rejectIfViolation_aBannedTerm_isA400_andBlocksNobody() {
+        assertThatThrownBy(() -> enforcer.rejectIfViolation("Weekend trip", "this is a scam"))
+                .isInstanceOf(BadRequestException.class);
+        assertThat(enforcement.blocked).isEmpty();
+    }
+
+    @Test
+    void rejectIfViolation_aBlockedDomain_isA400_andBlocksNobody() {
+        assertThatThrownBy(() -> enforcer.rejectIfViolation("deals at www.malicious-example.test/a"))
+                .isInstanceOf(BadRequestException.class);
+        assertThat(enforcement.blocked).isEmpty();
+    }
+
+    @Test
+    void rejectIfViolation_cleanTextAndNullOrBlank_passes() {
+        assertThatCode(() -> enforcer.rejectIfViolation("Sunrise at the lake", null, "  "))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void rejectBlockedLink_aBlockedDomain_isA400_andAnOrdinaryLinkPasses() {
+        assertThatThrownBy(() -> enforcer.rejectBlockedLink("https://malicious-example.test/x"))
+                .isInstanceOf(BadRequestException.class);
+        assertThatCode(() -> enforcer.rejectBlockedLink("https://www.youtube.com/watch?v=dQw4w9WgXcQ"))
+                .doesNotThrowAnyException();
+        assertThat(enforcement.blocked).isEmpty();
     }
 
     private static final class RecordingEnforcement implements AccountEnforcementService {

@@ -4,7 +4,7 @@ import com.tourbhook.api.entity.Place;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
-
+import org.springframework.data.domain.Pageable;
 import java.util.List;
 import java.util.Optional;
 
@@ -45,4 +45,21 @@ public interface PlaceRepository extends JpaRepository<Place, String> {
             @Param("minLng") double minLng,
             @Param("maxLng") double maxLng
     );
+
+    @Query("""
+        SELECT p FROM Place p
+        WHERE LOWER(p.city) = LOWER(:city)
+          AND p.googlePlaceId IS NOT NULL
+          AND p.googlePlaceId <> ''
+          AND LOWER(COALESCE(p.category, '')) NOT LIKE '%hotel%'
+          AND LOWER(COALESCE(p.category, '')) NOT LIKE '%lodging%'
+          AND LOWER(COALESCE(p.category, '')) NOT LIKE '%restaurant%'
+          AND LOWER(COALESCE(p.category, '')) NOT LIKE '%cafe%'
+          AND LOWER(COALESCE(p.category, '')) NOT LIKE '%diner%'
+          AND LOWER(COALESCE(p.category, '')) NOT LIKE '%store%'
+          AND LOWER(COALESCE(p.category, '')) NOT LIKE '%sublocality%'
+        ORDER BY p.suggested DESC, p.reviewsCount DESC
+    """)
+    List<Place> findCityHeroCandidates(@Param("city") String city, Pageable pageable);
+
 }

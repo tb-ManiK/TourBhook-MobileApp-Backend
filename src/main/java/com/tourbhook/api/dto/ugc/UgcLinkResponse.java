@@ -12,6 +12,8 @@ public record UgcLinkResponse(
         String title,
         String submittedBy,
         boolean mine,
-        LocalDateTime createdAt
+        LocalDateTime createdAt,
+        String thumbnailUrl,
+        String embedUrl
 ) {
 }

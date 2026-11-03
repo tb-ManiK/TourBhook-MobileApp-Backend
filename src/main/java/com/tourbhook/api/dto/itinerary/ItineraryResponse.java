@@ -8,6 +8,7 @@ public record ItineraryResponse(
         String city,
         String title,
         
-        List<ItineraryDayResponse> days
+        List<ItineraryDayResponse> days,
+        String imageUrl
 ) {
 }

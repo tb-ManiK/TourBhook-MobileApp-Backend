@@ -18,6 +18,8 @@ import com.tourbhook.api.service.ContentModerationEnforcer;
 import com.tourbhook.api.service.UgcLinkService;
 import com.tourbhook.api.service.ugc.ParsedLink;
 import com.tourbhook.api.service.ugc.UgcLinkParser;
+import com.tourbhook.api.service.ugc.UgcDestinations;
+import com.tourbhook.api.service.ugc.UgcLinkMedia;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.PageRequest;
@@ -26,7 +28,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.Locale;
+import java.util.Set;
 import java.util.Optional;
 
 @Slf4j
@@ -45,24 +47,17 @@ public class UgcLinkServiceImpl implements UgcLinkService {
     @Override
     public UgcLinkResponse submitLink(SubmitUgcLinkRequest request) {
         User user = authenticatedUserService.getCurrentUser();
-        String rawUrl = request.url().trim();
         String destination = normaliseDestination(request.destination());
         String title = blankToNull(request.title());
 
-
-        moderationEnforcer.enforce(user, rawUrl, destination, title);
-
-        // 2. A link that is not a YouTube video or a Reel is a mistake, not a violation: 400, no block.
-        ParsedLink link = linkParser.parse(rawUrl);
-
-        // 3. The dedicated link check, on the clean, canonical address that will actually be stored.
-        moderationEnforcer.enforceLink(user, link.canonicalUrl());
+        ParsedLink link = linkParser.parse(request.url());
+        moderationEnforcer.rejectIfViolation(destination, title);
+        moderationEnforcer.rejectBlockedLink(link.canonicalUrl());
 
         Place place = resolvePlace(request.placeId());
-        String destinationKey = destination.toLowerCase(Locale.ROOT);
+        String destinationKey = UgcDestinations.key(destination);
 
-        Optional<UgcLink> earlier = linkRepository.findByUserIdAndDestinationKeyAndPlatformAndExternalId(
-                user.getId(), destinationKey, link.platform(), link.externalId());
+        Optional<UgcLink> earlier = findEarlier(user, destination, link);
         if (earlier.isPresent() && earlier.get().getStatus() == UgcLinkStatus.ACTIVE) {
             throw new DuplicateResourceException("You have already shared this video for this destination.");
         }
@@ -99,8 +94,10 @@ public class UgcLinkServiceImpl implements UgcLinkService {
     @Transactional(readOnly = true)
     public List<UgcLinkResponse> getLinksForDestination(String destination, int page, int size) {
         User user = authenticatedUserService.getCurrentUser();
-        String destinationKey = normaliseDestination(destination).toLowerCase(Locale.ROOT);
-        return linkRepository.findForDestination(destinationKey, UgcLinkStatus.ACTIVE, pageOf(page, size)).stream()
+        String cleaned = normaliseDestination(destination);
+        Set<String> keys = UgcDestinations.lookupKeys(cleaned);
+        String legacyPrefix = UgcDestinations.legacyPrefix(cleaned);
+        return linkRepository.findForDestination(keys, legacyPrefix, UgcLinkStatus.ACTIVE, pageOf(page, size)).stream()
                 .map(link -> toResponse(link, user.getId()))
                 .toList();
     }
@@ -126,6 +123,16 @@ public class UgcLinkServiceImpl implements UgcLinkService {
     }
 
     // ------------------------------------------------------------------ helpers
+    private Optional<UgcLink> findEarlier(User user, String destination, ParsedLink link) {
+        for (String key : UgcDestinations.lookupKeys(destination)) {
+            Optional<UgcLink> found = linkRepository.findByUserIdAndDestinationKeyAndPlatformAndExternalId(
+                    user.getId(), key, link.platform(), link.externalId());
+            if (found.isPresent()) {
+                return found;
+            }
+        }
+        return Optional.empty();
+    }
 
     private void enforceHourlyLimit(User user) {
         long sharedLastHour = linkRepository.countByUserIdAndCreatedAtAfter(user.getId(), LocalDateTime.now().minusHours(1));
@@ -168,6 +175,9 @@ public class UgcLinkServiceImpl implements UgcLinkService {
                 link.getTitle(),
                 link.getUser().getName(),
                 link.getUser().getId().equals(currentUserId),
-                link.getCreatedAt());
+                link.getCreatedAt(),
+                UgcLinkMedia.thumbnailUrl(link.getPlatform(), link.getExternalId()),
+                UgcLinkMedia.embedUrl(link.getPlatform(), link.getExternalId(), link.getUrl()));
+
     }
 }

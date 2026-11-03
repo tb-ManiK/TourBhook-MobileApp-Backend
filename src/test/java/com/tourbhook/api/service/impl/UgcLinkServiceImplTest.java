@@ -29,6 +29,7 @@ import org.springframework.data.domain.Pageable;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
@@ -144,29 +145,28 @@ class UgcLinkServiceImplTest {
         service.submitLink(request(WATCH_URL, "Udaipur", null, "A title"));
 
         InOrder order = inOrder(moderationEnforcer);
-        order.verify(moderationEnforcer).enforce(user, WATCH_URL, "Udaipur", "A title");
-        order.verify(moderationEnforcer).enforceLink(user, CANONICAL);
+        order.verify(moderationEnforcer).rejectIfViolation("Udaipur", "A title");
+        order.verify(moderationEnforcer).rejectBlockedLink(CANONICAL);
     }
 
     @Test
-    void submitLink_aViolationIsCaughtBeforeTheLinkIsEvenValidated() {
-        String blockedSite = "https://malicious-example.test/video/1";
-        doThrow(new ContentModerationException("blocked")).when(moderationEnforcer)
-                .enforce(user, blockedSite, "Udaipur", null);
+    void submitLink_aViolationInTheTitle_isA400_nothingIsStored_andNobodyIsBlocked() {
+        doThrow(new BadRequestException("not allowed")).when(moderationEnforcer)
+                .rejectIfViolation("Udaipur", "bad title");
 
-        assertThatThrownBy(() -> service.submitLink(request(blockedSite, "Udaipur", null, null)))
-                .isInstanceOf(ContentModerationException.class);   // not BadRequestException
+        assertThatThrownBy(() -> service.submitLink(request(WATCH_URL, "Udaipur", null, "bad title")))
+                .isInstanceOf(BadRequestException.class);
 
         verify(moderationEnforcer, never()).enforceLink(any(), anyString());
         verify(linkRepository, never()).save(any());
     }
 
     @Test
-    void submitLink_aLinkThatFailsTheLinkCheck_storesNothing() {
-        doThrow(new ContentModerationException("blocked")).when(moderationEnforcer).enforceLink(user, CANONICAL);
+    void submitLink_aLinkThatFailsTheLinkCheck_isA400_andStoresNothing() {
+        doThrow(new BadRequestException("not allowed")).when(moderationEnforcer).rejectBlockedLink(CANONICAL);
 
         assertThatThrownBy(() -> service.submitLink(request(WATCH_URL, "Udaipur", null, null)))
-                .isInstanceOf(ContentModerationException.class);
+                .isInstanceOf(BadRequestException.class);
 
         verify(linkRepository, never()).save(any());
     }
@@ -174,13 +174,62 @@ class UgcLinkServiceImplTest {
     @Test
     void submitLink_aMistakenLink_isA400_andNobodyIsBlockedForIt() {
         for (String notSupported : List.of("hello world", "https://vimeo.com/123456789",
-                "https://www.youtube.com/@creator", "https://www.instagram.com/p/ABC12345/")) {
+                "https://www.youtube.com/@creator", "https://www.instagram.com/someone/")) {
             assertThatThrownBy(() -> service.submitLink(request(notSupported, "Udaipur", null, null)))
                     .as(notSupported).isInstanceOf(BadRequestException.class);
         }
 
         verify(moderationEnforcer, never()).enforceLink(any(), anyString());
         verify(linkRepository, never()).save(any());
+    }
+
+    @Test
+    void submitLink_aWholeShareText_isAccepted_andOnlyTheCleanLinkIsStored() {
+        service.submitLink(request("Loved this trip! " + WATCH_URL + " #udaipur", "Udaipur", null, null));
+
+        UgcLink saved = savedLink();
+        assertThat(saved.getUrl()).isEqualTo(CANONICAL);
+        assertThat(saved.getExternalId()).isEqualTo("dQw4w9WgXcQ");
+    }
+
+    @Test
+    void submitLink_aDestinationWrittenWithItsRegion_isStoredUnderTheMainName() {
+        UgcLinkResponse response = service.submitLink(request(WATCH_URL, "Mumbai, Maharashtra", null, null));
+
+        UgcLink saved = savedLink();
+        assertThat(saved.getDestination()).isEqualTo("Mumbai, Maharashtra");
+        assertThat(saved.getDestinationKey()).isEqualTo("mumbai");
+        assertThat(response.destination()).isEqualTo("Mumbai, Maharashtra");
+    }
+
+    @Test
+    void submitLink_theSameVideoSharedEarlierUnderTheOldKey_isStillADuplicate() {
+        UgcLink existing = UgcLink.builder().id("old").user(user).status(UgcLinkStatus.ACTIVE).build();
+        when(linkRepository.findByUserIdAndDestinationKeyAndPlatformAndExternalId(
+                "u1", "mumbai", UgcLinkPlatform.YOUTUBE, "dQw4w9WgXcQ")).thenReturn(Optional.empty());
+        when(linkRepository.findByUserIdAndDestinationKeyAndPlatformAndExternalId(
+                "u1", "mumbai, maharashtra", UgcLinkPlatform.YOUTUBE, "dQw4w9WgXcQ")).thenReturn(Optional.of(existing));
+
+        assertThatThrownBy(() -> service.submitLink(request(WATCH_URL, "Mumbai, Maharashtra", null, null)))
+                .isInstanceOf(DuplicateResourceException.class);
+        verify(linkRepository, never()).save(any());
+    }
+
+    @Test
+    void submitLink_theResponseCarriesAThumbnailAndAPlayerAddress_forYoutube() {
+        UgcLinkResponse response = service.submitLink(request(WATCH_URL, "Udaipur", null, null));
+
+        assertThat(response.thumbnailUrl()).isEqualTo("https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg");
+        assertThat(response.embedUrl()).isEqualTo("https://www.youtube.com/embed/dQw4w9WgXcQ");
+    }
+
+    @Test
+    void submitLink_anInstagramReel_hasNoThumbnail_butHasAPlayerAddress() {
+        UgcLinkResponse response = service.submitLink(
+                request("https://www.instagram.com/reel/C9xYz12AbCd/", "Goa", null, null));
+
+        assertThat(response.thumbnailUrl()).isNull();
+        assertThat(response.embedUrl()).isEqualTo("https://www.instagram.com/reel/C9xYz12AbCd/embed/");
     }
 
     // ------------------------------------------------------------------ duplicates, limits, taking down
@@ -262,7 +311,7 @@ class UgcLinkServiceImplTest {
                 .url(CANONICAL).status(UgcLinkStatus.ACTIVE).build();
         UgcLink theirs = UgcLink.builder().id("b").user(other).destination("Udaipur").platform(UgcLinkPlatform.INSTAGRAM)
                 .url("https://www.instagram.com/reel/C9xYz12AbCd/").status(UgcLinkStatus.ACTIVE).build();
-        when(linkRepository.findForDestination(eq("udaipur"), eq(UgcLinkStatus.ACTIVE), any(Pageable.class)))
+        when(linkRepository.findForDestination(eq(Set.of("udaipur")), eq("udaipur,%"), eq(UgcLinkStatus.ACTIVE), any(Pageable.class)))
                 .thenReturn(List.of(mine, theirs));
 
         List<UgcLinkResponse> links = service.getLinksForDestination("  UDAIPUR ", 0, 20);
@@ -274,14 +323,14 @@ class UgcLinkServiceImplTest {
 
     @Test
     void getLinks_clampsThePageSizeAndPageNumber() {
-        when(linkRepository.findForDestination(any(), any(), any(Pageable.class))).thenReturn(List.of());
+        when(linkRepository.findForDestination(any(), any(), any(), any(Pageable.class))).thenReturn(List.of());
         when(linkRepository.findForUser(any(), any(), any(Pageable.class))).thenReturn(List.of());
 
         service.getLinksForDestination("Udaipur", -5, 5000);
         service.getMyLinks(-1, 0);
 
         ArgumentCaptor<Pageable> destinationPage = ArgumentCaptor.forClass(Pageable.class);
-        verify(linkRepository).findForDestination(any(), any(), destinationPage.capture());
+        verify(linkRepository).findForDestination(any(), any(), any(), destinationPage.capture());
         assertThat(destinationPage.getValue().getPageNumber()).isZero();
         assertThat(destinationPage.getValue().getPageSize()).isEqualTo(50);
 

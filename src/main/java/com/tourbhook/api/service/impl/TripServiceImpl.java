@@ -7,10 +7,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-
 import com.tourbhook.api.dto.place.PlaceResponse;
 import com.tourbhook.api.dto.trip.CreateTripRequest;
 import com.tourbhook.api.dto.trip.GenerateTripRequest;
@@ -40,7 +38,7 @@ import com.tourbhook.api.repository.exception.ResourceNotFoundException;
 import com.tourbhook.api.service.AnalyticsService;
 import com.tourbhook.api.service.AuthenticatedUserService;
 import com.tourbhook.api.service.TripService;
-
+import com.tourbhook.api.service.image.ImageUrlResolver;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
@@ -58,6 +56,7 @@ public class TripServiceImpl implements TripService {
     private final PackingCategoryRepository packingCategoryRepository;
     private final AnalyticsService analyticsService;
     private final AuthenticatedUserService authenticatedUserService;
+    private final ImageUrlResolver imageUrlResolver;
 
     @Override
     @Transactional(readOnly = true)
@@ -183,7 +182,8 @@ public class TripServiceImpl implements TripService {
                 trip.getTripStyle(),
                 trip.getPurposeofTravel(),
                 mapStartingPoint(savedStartingPoint),
-                placeIds
+                placeIds,
+                imageUrlResolver.forTrip(trip)
         );
     }
 
@@ -218,7 +218,7 @@ public class TripServiceImpl implements TripService {
         return new TripDetailResponse(
                 trip.getId(),
                 trip.getCity(),
-                trip.getImageUrl(),
+                imageUrlResolver.forTrip(trip),
                 trip.getStartDate(),
                 trip.getEndDate(),
                 trip.getPlacesCount(),
@@ -518,6 +518,7 @@ public class TripServiceImpl implements TripService {
                                         : place.getTypicalDuration())
                                 .cost(BigDecimal.ZERO)
                                 .icon(resolveIcon(place.getCategory()))
+                                .placeId(place.getId())
                                 .build()
                 );
 
@@ -636,7 +637,7 @@ public class TripServiceImpl implements TripService {
         return new TripSummaryResponse(
                 trip.getId(),
                 trip.getCity(),
-                trip.getImageUrl(),
+                imageUrlResolver.forTrip(trip),
                 trip.getStartDate(),
                 trip.getEndDate(),
                 trip.getPlacesCount(),
@@ -653,13 +654,14 @@ public class TripServiceImpl implements TripService {
                 place.getId(),
                 place.getName(),
                 place.getCategory(),
-                place.getImageUrl(),
+                imageUrlResolver.forPlace(place),
                 place.getTypicalDuration(),
                 place.getLatitude(),
                 place.getLongitude(),
                 place.getRating(),
                 place.getReviewsCount(),
-                place.isVerified()
+                place.isVerified(),
+                place.getAddress()
         );
     }
 
@@ -720,7 +722,7 @@ public class TripServiceImpl implements TripService {
                 place.getId(),
                 place.getName(),
                 place.getCategory(),
-                place.getImageUrl(),
+                imageUrlResolver.forPlace(place),
                 place.getTypicalDuration(),
                 place.getLatitude(),
                 place.getLongitude(),

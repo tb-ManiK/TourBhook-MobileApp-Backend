@@ -10,6 +10,7 @@ import org.springframework.data.repository.query.Param;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.Collection;
 
 public interface UgcLinkRepository extends JpaRepository<UgcLink, String> {
 
@@ -20,9 +21,11 @@ public interface UgcLinkRepository extends JpaRepository<UgcLink, String> {
 
     long countByUserIdAndCreatedAtAfter(String userId, LocalDateTime since);
 
-    @Query("select l from UgcLink l join fetch l.user where l.destinationKey = :destinationKey "
+    @Query("select l from UgcLink l join fetch l.user where "
+            + "(l.destinationKey in :destinationKeys or l.destinationKey like :legacyPrefix) "
             + "and l.status = :status order by l.createdAt desc, l.id desc")
-    List<UgcLink> findForDestination(@Param("destinationKey") String destinationKey,
+    List<UgcLink> findForDestination(@Param("destinationKeys") Collection<String> destinationKeys,
+                                     @Param("legacyPrefix") String legacyPrefix,
                                      @Param("status") UgcLinkStatus status,
                                      Pageable pageable);
 

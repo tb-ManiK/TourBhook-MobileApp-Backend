@@ -13,7 +13,8 @@ public record GeneratedTripResponse(
         String tripStyle,
         String purposeOfTravel,
         TripStartingPointDto starting_point,
-        List<String> selected_places
+        List<String> selected_places,
+        String imageUrl
 
 ) {
 }

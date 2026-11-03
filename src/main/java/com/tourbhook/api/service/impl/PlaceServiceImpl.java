@@ -27,6 +27,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.transaction.annotation.Propagation;
 import java.util.Comparator;
+import com.tourbhook.api.service.image.ImageUrlResolver;
 
 @Slf4j
 @Service
@@ -50,6 +51,7 @@ public class PlaceServiceImpl implements PlaceService {
     private final TripService tripService;
     private final GoogleMapsClient googleMapsClient;
     private final PlaceRankingService placeRankingService;
+    private final ImageUrlResolver imageUrlResolver;
 
     @Value("${place-search.city-radius-km:40}")
     private double cityRadiusKm = 40;
@@ -549,7 +551,9 @@ public class PlaceServiceImpl implements PlaceService {
         place.setCity(city);
         place.setCategory(category);
         place.setAddress(address);
-        place.setImageUrl(imageUrl);
+        if (imageUrl != null) {
+            place.setImageUrl(imageUrl);
+        }
         place.setLatitude(latitude);
         place.setLongitude(longitude);
         place.setTypicalDuration(defaultDurationByCategory(category));
@@ -594,7 +598,7 @@ public class PlaceServiceImpl implements PlaceService {
                 place.getId(),
                 place.getName(),
                 place.getCategory(),
-                place.getImageUrl(),
+                imageUrlResolver.forPlace(place),
                 place.getTypicalDuration(),
                 place.getLatitude(),
                 place.getLongitude(),
@@ -607,22 +611,7 @@ public class PlaceServiceImpl implements PlaceService {
     }
 
     private String buildPhotoUrl(Object photosObj) {
-        if (!(photosObj instanceof List<?> photos) || photos.isEmpty()) {
-            return "https://via.placeholder.com/400x300?text=No+Image";
-        }
-
-        Object firstPhotoObj = photos.get(0);
-        if (!(firstPhotoObj instanceof Map<?, ?> firstPhoto)) {
-            return "https://via.placeholder.com/400x300?text=No+Image";
-        }
-
-        Object refObj = firstPhoto.get("photo_reference");
-        if (refObj == null) {
-            return "https://via.placeholder.com/400x300?text=No+Image";
-        }
-
-        return "https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photo_reference="
-                + refObj + "&key=" + googleMapsClient.getApiKey();
+        return null;
     }
 
     private String inferCityFromQuery(String query) {

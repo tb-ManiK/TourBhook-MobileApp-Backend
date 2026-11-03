@@ -17,6 +17,7 @@ import java.util.Map;
 public class AuthController {
 
 	private final AuthService authService;
+	private static final String DEVICE_ID_HEADER = "X-Device-Id";
 
 	@PostMapping("/login")
 	public ResponseEntity<ApiResponse<AuthResponse>> login(@Valid @RequestBody LoginRequest request) {
@@ -26,16 +27,16 @@ public class AuthController {
 	}
 
 	@PostMapping("/register")
-	public ResponseEntity<ApiResponse<AuthResponse>> register(@Valid @RequestBody RegisterRequest request) {
-		AuthResponse response = authService.register(request);
+	public ResponseEntity<ApiResponse<AuthResponse>> register(@Valid @RequestBody RegisterRequest request, @RequestHeader(value = DEVICE_ID_HEADER, required = false) String deviceId) {
+		AuthResponse response = authService.register(request, deviceId);
 		return ResponseEntity.status(HttpStatus.CREATED)
 				.body(ApiResponse.<AuthResponse>builder().success(true).message("Registration successful")
 						.data(response).timestamp(LocalDateTime.now()).path("/api/v1/auth/register").build());
 	}
 
 	@PostMapping("/google")
-	public ResponseEntity<ApiResponse<AuthResponse>> google(@Valid @RequestBody GoogleAuthRequest request) {
-		AuthResponse response = authService.googleLogin(request);
+	public ResponseEntity<ApiResponse<AuthResponse>> google(@Valid @RequestBody GoogleAuthRequest request,@RequestHeader(value = DEVICE_ID_HEADER, required = false) String deviceId) {
+		AuthResponse response = authService.googleLogin(request, deviceId);
 		return ResponseEntity.ok(ApiResponse.<AuthResponse>builder().success(true).message("Google sign-in successful")
 				.data(response).timestamp(LocalDateTime.now()).path("/api/v1/auth/google").build());
 	}
